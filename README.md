@@ -12,7 +12,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/TheyCallMeSecond/Argo/main/a
 
 ## Usage
 
-The script simplifies the process of setting up a Cloudflare Argo Tunnel and utilizing VLESS websocket connections. Detailed instructions on usage can be found within the script documentation.
+The script simplifies the process of setting up a Cloudflare Argo Tunnel and utilizing VLESS websocket connections.
 
 ## License
 
