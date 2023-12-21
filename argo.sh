@@ -39,7 +39,7 @@ install_service() {
 
     read -p "Enter your desired config port: " user_port
     read -p "Enter your desired Tunnel name: " user_tunnelname
-    read -p "Enter your desired subdomain (e.g., my-subdomain): " user_subdomain
+    read -p "Enter your desired subdomain (e.g., sub.mydomain.com): " user_subdomain
     uuid=$(cat /proc/sys/kernel/random/uuid)
 
     echo "Creating tunnel..."
@@ -110,17 +110,8 @@ EOF
     mkdir /root/singbox && cd /root/singbox || exit
     LATEST_URL=$(curl -Ls -o /dev/null -w "%{url_effective}" https://github.com/SagerNet/sing-box/releases/latest)
     LATEST_VERSION="$(echo "$LATEST_URL" | grep -o -E '/.?[0-9|\.]+$' | grep -o -E '[0-9|\.]+')"
-    LINK="https://github.com/SagerNet/sing-box/releases/download/v${LATEST_VERSION}/sing-box-${LATEST_VERSION}-linux-amd64.tar.gz"
-    spinner &
-    spinner_pid=$! 
-    wget "$LINK" -q -O "sing-box-${LATEST_VERSION}-linux-amd64.tar.gz" &
-    download_pid=$! 
-
-    while kill -0 "$download_pid" >/dev/null 2>&1; do
-        sleep 0.5
-    done
-
-    kill "$spinner_pid" >/dev/null 2>&1
+    LINK="https://github.com/SagerNet/sing-box/releases/download/v${LATEST_VERSION}/sing-box-${LATEST_VERSION}-linux-amd64.tar.gz" 
+    wget "$LINK"
     tar -xf "sing-box-${LATEST_VERSION}-linux-amd64.tar.gz"
     cp "sing-box-${LATEST_VERSION}-linux-amd64/sing-box" "/usr/bin/argo-vless"
     cd && rm -rf singbox
