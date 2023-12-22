@@ -20,7 +20,7 @@ This project is licensed under the [GPL-3.0 license ](https://github.com/TheyCal
 
 ## Acknowledgments
 
-Special thanks to contributors and resources that have made this project possible.
+Special thanks to [iSegaro](https://github.com/iSegaro) and resources that have made this project possible.
 
 ## Contact
 
