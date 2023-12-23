@@ -60,6 +60,11 @@ install_service() {
       "sniff": true,
       "sniff_override_destination": true,
       "tls": {},
+      "multiplex": {
+        "enabled": true,
+        "padding": false,
+        "brutal": {}
+      },      
       "transport": {
         "type": "ws",
         "path": "",
