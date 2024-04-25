@@ -22,10 +22,13 @@ spinner() {
 
 install_service() {
     if ! command -v cloudflared &>/dev/null; then
+    
+        # Getting latest Cloudflared binary URL To Download 
+        LATEST_CLFD_URL=$(curl -Ls -o /dev/null -w "%{url_effective}" https://github.com/cloudflare/cloudflared/releases/latest | sed 's/tag/download/g')
 
         echo "Downloading Cloudflare Argo Tunnel binary..."
-        curl -fsSL https://github.com/cloudflare/cloudflared/releases/download/2023.10.0/cloudflared-linux-amd64 \
-            -o cloudflared && chmod +x cloudflared && mv cloudflared /usr/bin/ &
+        curl -fsSL ${LATEST_CLFD_URL}/cloudflared-linux-amd64 \
+            -o /usr/bin/cloudflared && chmod +x /usr/bin/cloudflared &
         spinner $!
 
     else
