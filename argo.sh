@@ -43,7 +43,7 @@ install_service() {
     spinner $!
     echo "Authentication successful."
 
-    read -p "Enter your desired config port [Use 443 when possible]: " user_port
+    read -p "Enter your desired config port: " user_port
     read -p "Enter your desired Tunnel name: " user_tunnelname
     read -p "Enter your desired subdomain (e.g., sub.mydomain.com): " user_subdomain
     uuid=$(cat /proc/sys/kernel/random/uuid)
