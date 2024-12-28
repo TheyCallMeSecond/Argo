@@ -1,5 +1,43 @@
 #!/bin/bash
 
+# Global variables
+SCRIPT_VERSION="2.0.0"
+SCRIPT_DATE="2024-12-28"
+
+# Print banner
+print_banner() {
+    clear
+    cat << "EOF"
+ █████╗ ██████╗  ██████╗  ██████╗ 
+██╔══██╗██╔══██╗██║  ██║██╔═══██╗
+███████║██████╔╝██║  ██║██║   ██║
+██╔══██║██╔══██╗██║  ██║██║   ██║
+██║  ██║██║  ██║╚██████╔╝╚██████╔╝
+╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝ 
+EOF
+    cat << EOF
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 VLESS WebSocket + Cloudflare Tunnel
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Version: ${SCRIPT_VERSION} 
+Date:    ${SCRIPT_DATE}    
+Author:  @theTCS_
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF
+}
+
+# Menu Display
+show_menu() {
+  echo -e "\e[96m╭────────── Menu Options ────────╮\e[0m"
+  echo -e "\e[96m│\e[0m [\e[92m1\e[0m] ⚡ Install                 \e[96m│\e[0m"
+  echo -e "\e[96m│\e[0m [\e[92m2\e[0m] 📋 Show Config             \e[96m│\e[0m"
+  echo -e "\e[96m│\e[0m [\e[92m3\e[0m] 🗑️  Uninstall               \e[96m│\e[0m"
+  echo -e "\e[96m│\e[0m [\e[92m0\e[0m] 🚪 Exit                    \e[96m│\e[0m"
+  echo -e "\e[96m╰────────────────────────────────╯\e[0m"
+  echo
+  echo -e "\e[93mEnter your choice \e[92m[0-3]\e[93m: \e[0m"
+}
+
 if [ "$EUID" -ne 0 ]; then
     echo "Please run this script as root or using sudo."
     exit
@@ -293,40 +331,34 @@ uninstall_service() {
     echo -e "Argo uninstalled successfully"
 }
 
+# Main program loop
 while true; do
-    echo "┏┓      ┏┳┓       ┓ ┳      ┓    
-┣┫┏┓┏┓┏┓ ┃┓┏┏┓┏┓┏┓┃ ┃┏┓┏╋┏┓┃┏┓┏┓
-┛┗┛ ┗┫┗┛ ┻┗┻┛┗┛┗┗ ┗ ┻┛┗┛┗┗┻┗┗ ┛ 
-     ┛                        by theTCS
+  print_banner
+  show_menu
+  read choice
 
-"
-    echo "1. Install"
-    echo "2. Show Config"
-    echo "3. Uninstall"
-    echo "0. Exit"
-
-    read -p "Enter your choice: " choice
-
-    case $choice in
-    1)
-        clear
-        install_service
-        ;;
-    2)
-        clear
-        show_config
-        ;;
-    3)
-        clear
-        uninstall_service
-        ;;
-    0)
-        clear
-        echo "Exiting..."
-        break
-        ;;
-    *)
-        echo "Invalid choice. Please select a valid option."
-        ;;
-    esac
+  case $choice in
+  1)
+    clear
+    install_service
+    ;;
+  2)
+    clear
+    show_config
+    ;;
+  3)
+    clear
+    uninstall_service
+    ;;
+  0)
+    clear
+    echo -e "\e[92m👋 Thank you for using Argo! Goodbye!\e[0m"
+    exit 0
+    ;;
+  *)
+    echo -e "\e[91m❌ Invalid choice. Please select a valid option.\e[0m"
+    sleep 2
+    clear
+    ;;
+  esac
 done
