@@ -1,15 +1,24 @@
 #!/bin/bash
 
-# Exit on error
-set -e
+# Exit on error and unset variables
+set -euo pipefail
 
 # Global variables
 LOG_FILE="/var/log/argo-setup.log"
 ARGO_DIR="/etc/argo"
 CONFIG_FILE="${ARGO_DIR}/config.txt"
 JSON_CONFIG="${ARGO_DIR}/config.json"
-SCRIPT_VERSION="2.0.0"
-SCRIPT_DATE="2024-12-28"
+SCRIPT_VERSION="2.2.0"
+SCRIPT_DATE="2025-01-26"
+TMP_DIR=$(mktemp -d -t argo-XXXXXXXXXX)
+
+# Cleanup function
+cleanup() {
+  rm -rf "$TMP_DIR"
+  log_message "Temporary files cleaned up"
+}
+
+trap cleanup EXIT
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
@@ -21,6 +30,7 @@ fi
 setup_logging() {
   touch "$LOG_FILE"
   chmod 640 "$LOG_FILE"
+  exec 3>&1 # Save original stdout to FD 3
   exec 1> >(tee -a "$LOG_FILE")
   exec 2> >(tee -a "$LOG_FILE" >&2)
   log_message "Starting Argo setup v${SCRIPT_VERSION}"
@@ -38,18 +48,18 @@ spinner() {
   local spin='-\|/'
   local spinpos=0
 
-  while ps -p $pid &>/dev/null; do
-    printf "\r[%c] " "${spin:$spinpos:1}"
+  while ps -p "$pid" &>/dev/null; do
+    printf "\r[%c] " "${spin:$spinpos:1}" >&3
     spinpos=$(((spinpos + 1) % 4))
-    sleep $delay
+    sleep "$delay"
   done
-  printf "\r   \r"
+  printf "\r   \r" >&3
 }
 
 # Print banner
 print_banner() {
-    clear
-    cat << "EOF"
+  clear
+  cat <<"EOF"
  █████╗ ██████╗  ██████╗  ██████╗ 
 ██╔══██╗██╔══██╗██║  ██║██╔═══██╗
 ███████║██████╔╝██║  ██║██║   ██║
@@ -57,14 +67,14 @@ print_banner() {
 ██║  ██║██║  ██║╚██████╔╝╚██████╔╝
 ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝ 
 EOF
-    cat << EOF
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚀 VLESS WebSocket + Cloudflare Tunnel
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  cat <<EOF
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 VLESS + Cloudflare Tunnel
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Version: ${SCRIPT_VERSION} 
 Date:    ${SCRIPT_DATE}    
 Author:  @theTCS_
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EOF
 }
 
@@ -73,16 +83,17 @@ show_menu() {
   echo -e "\e[96m╭────────── Menu Options ────────╮\e[0m"
   echo -e "\e[96m│\e[0m [\e[92m1\e[0m] ⚡ Install                 \e[96m│\e[0m"
   echo -e "\e[96m│\e[0m [\e[92m2\e[0m] 📋 Show Config             \e[96m│\e[0m"
-  echo -e "\e[96m│\e[0m [\e[92m3\e[0m] 🗑️  Uninstall               \e[96m│\e[0m"
+  echo -e "\e[96m│\e[0m [\e[92m3\e[0m] 🆕 Update Components       \e[96m│\e[0m"
+  echo -e "\e[96m│\e[0m [\e[92m4\e[0m] 🗑️  Uninstall               \e[96m│\e[0m"
   echo -e "\e[96m│\e[0m [\e[92m0\e[0m] 🚪 Exit                    \e[96m│\e[0m"
   echo -e "\e[96m╰────────────────────────────────╯\e[0m"
   echo
-  echo -e "\e[93mEnter your choice \e[92m[0-3]\e[93m: \e[0m"
+  echo -en "\e[93mEnter your choice \e[92m[0-4]\e[93m: \e[0m"
 }
 
 # Check dependencies
 check_dependencies() {
-  local deps=("curl" "wget" "tar" "ufw" "qrencode" "systemctl")
+  local deps=("curl" "wget" "tar" "qrencode")
   local missing_deps=()
 
   log_message "Checking dependencies..."
@@ -94,15 +105,22 @@ check_dependencies() {
 
   if [ ${#missing_deps[@]} -ne 0 ]; then
     log_message "Missing dependencies: ${missing_deps[*]}"
-    echo "The following dependencies are missing: ${missing_deps[*]}"
-    read -p "Would you like to install missing dependencies? [y/N] " -n 1 -r
-    echo
+    echo "The following dependencies are missing: ${missing_deps[*]}" >&3
+    read -rp "Would you like to install missing dependencies? [y/N] " -n 1 -r
+    echo >&3
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-      apt-get update
-      apt-get install -y "${missing_deps[@]}"
+      if command -v apt-get &>/dev/null; then
+        apt-get update
+        apt-get install -y "${missing_deps[@]}"
+      elif command -v yum &>/dev/null; then
+        yum install -y "${missing_deps[@]}"
+      else
+        log_message "Unsupported package manager"
+        exit 1
+      fi
       log_message "Dependencies installed successfully"
     else
-      log_message "Cannot proceed without required dependencies"
+      log_message "Aborting due to missing dependencies"
       exit 1
     fi
   fi
@@ -116,30 +134,36 @@ validate_input() {
 
   # Validate port
   if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-    log_message "Error: Invalid port number. Must be between 1-65535"
+    log_message "Invalid port number: $port"
+    echo "Error: Invalid port number. Must be between 1-65535" >&3
     return 1
   fi
 
   # Validate tunnel name
-  if [[ ! "$tunnelname" =~ ^[a-zA-Z0-9-]+$ ]]; then
-    log_message "Error: Invalid tunnel name. Use only letters, numbers, and hyphens"
+  if [[ ! "$tunnelname" =~ ^[a-zA-Z0-9-]{1,128}$ ]]; then
+    log_message "Invalid tunnel name: $tunnelname"
+    echo "Error: Invalid tunnel name. Use 1-128 letters, numbers, or hyphens" >&3
     return 1
   fi
 
   # Validate subdomain format
   if [[ ! "$subdomain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-    log_message "Error: Invalid subdomain format"
+    log_message "Invalid subdomain format: $subdomain"
+    echo "Error: Invalid subdomain format. Use valid domain format (e.g., sub.example.com)" >&3
     return 1
   fi
 
   return 0
 }
+
 # Backup configuration
 backup_config() {
   if [ -d "$ARGO_DIR" ]; then
     local backup_dir="${ARGO_DIR}.backup.$(date +%Y%m%d_%H%M%S)"
     cp -r "$ARGO_DIR" "$backup_dir"
     log_message "Configuration backed up to $backup_dir"
+    # Keep only last 3 backups
+    find "${ARGO_DIR}.backup."* -maxdepth 0 -type d | sort -r | tail -n +4 | xargs rm -rf
   fi
 }
 
@@ -148,9 +172,9 @@ secure_permissions() {
   log_message "Setting secure permissions..."
   mkdir -p "$ARGO_DIR"
   chmod 750 "$ARGO_DIR"
-  chmod 640 "$JSON_CONFIG"
-  chmod 644 /etc/systemd/system/argo-vless.service
-  chmod 644 /etc/systemd/system/cloudflared.service
+  [ -f "$JSON_CONFIG" ] && chmod 640 "$JSON_CONFIG"
+  [ -f "/etc/systemd/system/argo-vless.service" ] && chmod 644 /etc/systemd/system/argo-vless.service
+  [ -f "/etc/systemd/system/cloudflared.service" ] && chmod 644 /etc/systemd/system/cloudflared.service
   chown -R root:root "$ARGO_DIR"
   log_message "Permissions set successfully"
 }
@@ -178,7 +202,81 @@ cleanup_failed_install() {
   log_message "Cleanup completed"
 }
 
-# Install service
+# Get latest GitHub release
+get_latest_release() {
+  local repo=$1
+  local attempt=0
+  local max_attempts=3
+  local result
+
+  while [ $attempt -lt $max_attempts ]; do
+    result=$(curl -s \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/$repo/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+    if [ -n "$result" ]; then
+      echo "$result"
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  log_message "Failed to get latest release for $repo after $max_attempts attempts"
+  echo "unknown"
+  return 1
+}
+
+# Install cloudflared
+install_cloudflared() {
+  log_message "Installing Cloudflared..."
+  local CLFD_VERSION
+  CLFD_VERSION=$(get_latest_release "cloudflare/cloudflared")
+  CLFD_URL="https://github.com/cloudflare/cloudflared/releases/download/${CLFD_VERSION}/cloudflared-linux-amd64"
+
+  echo "Downloading Cloudflared ${CLFD_VERSION}..." >&3
+  curl -fsSL "$CLFD_URL" -o "${TMP_DIR}/cloudflared" &
+  spinner $!
+  install -m 755 "${TMP_DIR}/cloudflared" /usr/bin/cloudflared
+  log_message "Cloudflared installed successfully"
+}
+
+# Install sing-box
+install_singbox() {
+  log_message "Installing sing-box..."
+  local SB_VERSION
+  SB_VERSION=$(get_latest_release "SagerNet/sing-box" | sed 's/^v//')
+  SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-linux-amd64.tar.gz"
+
+  echo "Downloading sing-box ${SB_VERSION}..." >&3
+  curl -fsSL "$SB_URL" -o "${TMP_DIR}/singbox.tar.gz" &
+  spinner $!
+  tar -xzf "${TMP_DIR}/singbox.tar.gz" -C "${TMP_DIR}"
+  install -m 755 "${TMP_DIR}/sing-box-${SB_VERSION}-linux-amd64/sing-box" /usr/bin/argo-vless
+  log_message "sing-box installed successfully"
+}
+
+# Configure firewall
+configure_firewall() {
+  local port=$1
+  if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+    log_message "Configuring UFW..."
+    ufw allow "$port"/tcp
+    ufw reload
+    log_message "UFW rules updated"
+  elif command -v firewall-cmd &>/dev/null; then
+    log_message "Configuring firewalld..."
+    firewall-cmd --permanent --add-port="$port"/tcp
+    firewall-cmd --reload
+    log_message "Firewalld rules updated"
+  else
+    log_message "No active firewall detected, skipping configuration"
+  fi
+}
+
+# Main installation function
 install_service() {
   trap cleanup_failed_install ERR
 
@@ -189,40 +287,34 @@ install_service() {
 
   # Get user input with validation
   while true; do
-    read -p "Enter your desired config port: " user_port
-    read -p "Enter your desired Tunnel name: " user_tunnelname
-    read -p "Enter your desired subdomain (e.g., sub.mydomain.com): " user_subdomain
+    read -rp "Enter your desired config port [443]: " user_port
+    user_port=${user_port:-443}
+    read -rp "Enter your desired Tunnel name [argo-tunnel]: " user_tunnelname
+    user_tunnelname=${user_tunnelname:-argo-tunnel}
+    read -rp "Enter your subdomain (e.g., sub.example.com): " user_subdomain
 
     if validate_input "$user_port" "$user_tunnelname" "$user_subdomain"; then
       break
     fi
-    echo "Please try again..."
   done
 
   # Generate UUID
-  uuid=$(cat /proc/sys/kernel/random/uuid)
+  uuid=$(uuidgen || cat /proc/sys/kernel/random/uuid)
   log_message "Generated UUID: $uuid"
 
   # Install cloudflared if not present
   if ! command -v cloudflared &>/dev/null; then
-    log_message "Installing Cloudflared..."
-    echo "Downloading Cloudflare Argo Tunnel binary..."
-    LATEST_CLFD_URL=$(curl -Ls -o /dev/null -w "%{url_effective}" https://github.com/cloudflare/cloudflared/releases/latest | sed 's/tag/download/g')
-    curl -fsSL "${LATEST_CLFD_URL}/cloudflared-linux-amd64" -o /usr/bin/cloudflared &
-    spinner $!
-    chmod +x /usr/bin/cloudflared
-    log_message "Cloudflared installed successfully"
+    install_cloudflared
   fi
 
   # Authenticate and create tunnel
   log_message "Starting Cloudflare authentication..."
-  echo "Authenticating with Cloudflare..."
-  cloudflared tunnel login &
-  spinner $!
+  echo "Authenticate Cloudflare tunnel here:" >&3
+  cloudflared tunnel login 2>&3
 
   log_message "Creating tunnel: $user_tunnelname"
-  cloudflared tunnel create "$user_tunnelname"
-  cloudflared tunnel route dns "$user_tunnelname" "$user_subdomain"
+  cloudflared tunnel create "$user_tunnelname" 2>&3
+  cloudflared tunnel route dns "$user_tunnelname" "$user_subdomain" 2>&3
 
   # Create configuration directory and files
   mkdir -p "$ARGO_DIR"
@@ -393,31 +485,12 @@ WantedBy=multi-user.target
 EOF
 
   # Install sing-box
-  log_message "Installing sing-box..."
-  mkdir -p /root/singbox && cd /root/singbox
-  LATEST_URL=$(curl -Ls -o /dev/null -w "%{url_effective}" https://github.com/SagerNet/sing-box/releases/latest)
-  LATEST_VERSION="$(echo "$LATEST_URL" | grep -o -E '/.?[0-9|\.]+$' | grep -o -E '[0-9|\.]+')"
-  LINK="https://github.com/SagerNet/sing-box/releases/download/v${LATEST_VERSION}/sing-box-${LATEST_VERSION}-linux-amd64.tar.gz"
-
-  echo "Downloading sing-box..."
-  wget "$LINK" &
-  spinner $!
-
-  tar -xf "sing-box-${LATEST_VERSION}-linux-amd64.tar.gz"
-  cp "sing-box-${LATEST_VERSION}-linux-amd64/sing-box" "/usr/bin/argo-vless"
-  cd && rm -rf singbox
+  if ! command -v argo-vless &>/dev/null; then
+    install_singbox
+  fi
 
   # Configure firewall
-  if ufw status | grep -q "Status: active"; then
-    log_message "Configuring UFW..."
-    ufw disable
-    ufw allow "$user_port"
-    echo "y" | ufw enable
-    ufw reload
-    log_message "UFW rules updated"
-  else
-    log_message "UFW is not active, skipping firewall configuration"
-  fi
+  configure_firewall "$user_port"
 
   # Set permissions and start services
   secure_permissions
@@ -434,32 +507,87 @@ EOF
   echo -e "$result_url" >"$CONFIG_FILE"
 
   # Display configuration
-  echo -e "\n================== Configuration ==================="
-  echo -e "Config URL: \e[91m$result_url\e[0m"
-  echo -e "\nQR Code:"
-  qrencode -t ANSIUTF8 <<<"$result_url"
+  echo -e "\n================== Configuration ===================" >&3
+  echo -e "Config URL: \e[91m$result_url\e[0m" >&3
+  echo -e "\nQR Code:" >&3
+  qrencode -t ANSIUTF8 <<<"$result_url" >&3
 
   log_message "Installation completed successfully"
 
-  echo -e "\n\e[31mPress Enter to Exit\e[0m"
-  read
+  echo -e "\n\e[31mPress Enter to Exit\e[0m" >&3
+  read -r
   clear
 }
 
 # Show configuration
 show_config() {
   if [ -f "$CONFIG_FILE" ]; then
-    echo -e "Config URL: \e[91m$(cat "$CONFIG_FILE")\e[0m"
-    echo -e "\nQR Code:"
-    qrencode -t ANSIUTF8 <<<"$(cat "$CONFIG_FILE")"
+    echo -e "Config URL: \e[91m$(cat "$CONFIG_FILE")\e[0m" >&3
+    echo -e "\nQR Code:" >&3
+    qrencode -t ANSIUTF8 <<<"$(cat "$CONFIG_FILE")" >&3
   else
     log_message "Configuration file not found"
-    echo "Argo is not installed yet"
+    echo "Argo is not installed yet" >&3
   fi
 
-  echo -e "\n\e[31mPress Enter to Exit\e[0m"
-  read
+  echo -e "\n\e[31mPress Enter to Exit\e[0m" >&3
+  read -r
   clear
+}
+
+# Update binaries
+update_components() {
+  clear
+  print_banner
+  log_message "Starting component update process"
+
+  any_updated=false
+
+  # Cloudflared update
+  if command -v cloudflared &>/dev/null; then
+    current_cf_version=$(cloudflared --version | grep -Po '\d+\.\d+\.\d+')
+    latest_cf_version=$(get_latest_release "cloudflare/cloudflared")
+
+    if [ "$current_cf_version" != "$latest_cf_version" ]; then
+      echo -e "\e[93mUpdating Cloudflared from v${current_cf_version} to v${latest_cf_version}\e[0m" >&3
+      systemctl stop cloudflared.service 2>/dev/null || true
+      install_cloudflared
+      systemctl start cloudflared.service 2>/dev/null || true
+      any_updated=true
+    else
+      echo -e "\e[92mCloudflared is already up-to-date (v${current_cf_version})\e[0m" >&3
+    fi
+  else
+    echo -e "\e[91mCloudflared not installed - skipping update\e[0m" >&3
+  fi
+
+  # sing-box update
+  if command -v argo-vless &>/dev/null; then
+    current_sb_version=$(argo-vless version 2>&1 | grep -m1 'sing-box version' | awk '{print $3}')
+    latest_sb_version=$(get_latest_release "SagerNet/sing-box" | sed 's/^v//')
+
+    if [ "$current_sb_version" != "$latest_sb_version" ]; then
+      echo -e "\e[93mUpdating sing-box from v${current_sb_version} to v${latest_sb_version}\e[0m" >&3
+      systemctl stop argo-vless.service 2>/dev/null || true
+      install_singbox
+      systemctl start argo-vless.service 2>/dev/null || true
+      any_updated=true
+    else
+      echo -e "\e[92msing-box is already up-to-date (v${current_sb_version})\e[0m" >&3
+    fi
+  else
+    echo -e "\e[91msing-box not installed - skipping update\e[0m" >&3
+  fi
+
+  if [ "$any_updated" = true ]; then
+    echo -e "\e[92mUpdate completed successfully!\e[0m" >&3
+    log_message "Components updated successfully"
+  else
+    echo -e "\e[93mNo updates were available\e[0m" >&3
+  fi
+
+  echo -e "\n\e[31mPress Enter to Continue\e[0m" >&3
+  read -r
 }
 
 # Uninstall service
@@ -476,48 +604,49 @@ uninstall_service() {
   manage_service "disable" "cloudflared.service" || true
 
   # Remove files
-  rm -f /etc/systemd/system/argo-vless.service
-  rm -f /etc/systemd/system/cloudflared.service
-  rm -f /usr/bin/cloudflared
-  rm -f /usr/bin/argo-vless
+  rm -f /etc/systemd/system/argo-vless.service \
+    /etc/systemd/system/cloudflared.service \
+    /usr/bin/cloudflared \
+    /usr/bin/argo-vless
   rm -rf "$ARGO_DIR"
 
   systemctl daemon-reload
   log_message "Uninstallation completed"
 
-  echo "Argo uninstalled successfully"
+  echo "Argo uninstalled successfully" >&3
   sleep 2
   clear
 }
+
+setup_logging
 
 # Main program loop
 while true; do
   print_banner
   show_menu
-  read choice
+  read -r choice
 
   case $choice in
   1)
-    clear
     install_service
     ;;
   2)
-    clear
     show_config
     ;;
   3)
-    clear
+    update_components
+    ;;
+  4)
     uninstall_service
     ;;
   0)
-    clear
-    echo -e "\e[92m👋 Thank you for using Argo! Goodbye!\e[0m"
+    echo -e "\e[92m👋 Thank you for using Argo! Goodbye!\e[0m" >&3
     exit 0
     ;;
   *)
-    echo -e "\e[91m❌ Invalid choice. Please select a valid option.\e[0m"
+    echo -e "\e[91m❌ Invalid choice. Please select a valid option.\e[0m" >&3
     sleep 2
-    clear
     ;;
   esac
+  clear
 done
